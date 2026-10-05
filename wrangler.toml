@@ -5,9 +5,7 @@ compatibility_date = "2026-01-01"
 # Mantém no deploy as variáveis/secrets cadastrados no painel (TMDB_KEY, MDBLIST_KEY...)
 keep_vars = true
 
-# OPCIONAL: guarda os aparelhos registrados de forma permanente.
-# 1) No painel: Storage & Databases > KV > Create namespace (nome: controle-kv)
-# 2) Copie o ID dele, cole abaixo e tire o "#" das 3 linhas.
-# [[kv_namespaces]]
-# binding = "KV"
-# id = "COLE_AQUI_O_ID_DO_NAMESPACE"
+# Guarda os aparelhos registrados, o guia dos pais, a classificação e a sinopse de forma permanente.
+[[kv_namespaces]]
+binding = "KV"
+id = "1cd06a5363d1444fa7bcf08be3926a6f"
