@@ -1,5 +1,5 @@
 const SELF_ID = 'community.guiadospais.ptbr';
-const LOGO = 'https://raw.githubusercontent.com/Athayres/IMDB-Conteudo-Classificado/refs/heads/main/logo_family.jpg';
+const LOGO = 'https://raw.githubusercontent.com/Athayres/Controle-de-improprio/refs/heads/main/logo_family.jpg';
 
 const NIVEIS = ['Nenhum', 'Leve', 'Moderado', 'Grave'];
 const COR = ['⬜', '🟩', '🟨', '🟥'];
@@ -13,7 +13,6 @@ const CATEGORIAS = [
 
 const CFG_PADRAO = { max: { sexo: 0, violencia: 1, palavroes: 0, drogas: 1, susto: 1 }, idade: 18 };
 
-// Caches em memória na Edge da Cloudflare
 const cacheGuias = new Map();
 const cacheBr = new Map();
 const cacheMdb = new Map();
@@ -56,14 +55,19 @@ function lerConfig(b64) {
   try {
     let b = b64.replace(/-/g, '+').replace(/_/g, '/');
     while (b.length % 4) b += '=';
-    const j = JSON.parse(decodeURIComponent(escape(atob(b))));
+    const binString = atob(b);
+    const bytes = Uint8Array.from(binString, (m) => m.codePointAt(0));
+    const jsonStr = new TextDecoder().decode(bytes);
+    const j = JSON.parse(jsonStr);
     for (const c of CATEGORIAS) {
       const v = Number(j.max && j.max[c.key]);
       if (Number.isInteger(v) && v >= 0 && v <= 3) cfg.max[c.key] = v;
     }
     const idade = Number(j.idade);
     if ([0, 10, 12, 14, 16, 18, 99].includes(idade)) cfg.idade = idade;
-  } catch { /* usa padrão */ }
+  } catch (e) {
+    console.error('Erro lerConfig:', e);
+  }
   return cfg;
 }
 
@@ -124,9 +128,7 @@ async function resolverImdbId(id, tipo, env) {
   if ((raw.startsWith('tmdb:') || raw.startsWith('tvdb:')) && !/^\d+$/.test(num)) return null;
 
   try {
-    if (raw.startsWith('tmdb:')) {
-      return await ext(tv ? 'tv' : 'movie', num);
-    }
+    if (raw.startsWith('tmdb:')) return await ext(tv ? 'tv' : 'movie', num);
     if (raw.startsWith('tvdb:')) {
       const f = await tmdb(`/find/${num}`, { external_source: 'tvdb_id' }, env);
       const r = ((tv ? f.tv_results : f.movie_results) || [])[0];
@@ -145,13 +147,11 @@ async function acharTMDB(imdbId, env) {
 }
 
 async function resumoPtBR(imdbId, env) {
-  const tmdbKey = env.TMDB_KEY || '';
-  if (!tmdbKey) return null;
+  if (!env.TMDB_KEY) return null;
   try {
     const f = await acharTMDB(imdbId, env);
     const movie = (f.movie_results || [])[0];
     const tv = (f.tv_results || [])[0];
-
     if (movie) {
       const detalhe = await tmdb(`/movie/${movie.id}`, {}, env);
       if (detalhe && detalhe.overview) return detalhe.overview;
@@ -165,8 +165,7 @@ async function resumoPtBR(imdbId, env) {
 }
 
 async function classificacaoTMDB(imdbId, env) {
-  const tmdbKey = env.TMDB_KEY || '';
-  if (!tmdbKey) return null;
+  if (!env.TMDB_KEY) return null;
   const c = cacheBr.get(imdbId);
   if (c && Date.now() - c.t < (c.v ? GUIA_TTL : NULO_TTL)) return c.v;
   try {
@@ -194,7 +193,7 @@ async function baixarPaginaIMDb(imdbId) {
       signal: AbortSignal.timeout(6000),
     });
     return { status: r.status, html: await r.text() };
-  } catch (e) { return { status: 0, html: '' }; }
+  } catch { return { status: 0, html: '' }; }
 }
 
 const GQL_QUERY = 'query($id: ID!){ title(id:$id){ parentsGuide{ categories{ category{ id text } severity{ id text votedFor } totalSeverityVotes } } } }';
@@ -210,7 +209,7 @@ async function baixarGraphQL(imdbId) {
     let json = null;
     try { json = JSON.parse(texto); } catch {}
     return { status: r.status, json };
-  } catch (e) { return { status: 0, json: null }; }
+  } catch { return { status: 0, json: null }; }
 }
 
 function nivelDoItem(el) {
@@ -595,7 +594,7 @@ async function meta(tipo, id, cfg, userAgent, env) {
   } else {
     base.description = original;
     const novasTags = [];
-    if (classificacaoFinal) novasTags.push(`👨‍👩‍👧‍👦 ${rotuloClassificacao(classificacaoFinal)}`);
+    if (classificacaoFinal) novasTags.push(`👨‍‍👩‍👧‍👦 ${rotuloClassificacao(classificacaoFinal)}`);
     if (guia && typeof guia === 'object') {
       for (const c of CATEGORIAS) {
         const n = guia[c.key];
@@ -733,11 +732,11 @@ function paginaConfig(cfg, host, protocol) {
     clearInterval(pollReg);
     fetch('/registrar/' + window._b64).then(function(r){ return r.json(); }).then(function(j){
       if (!j.ok) { m.textContent = 'Não foi possível iniciar.'; return; }
-      m.textContent = 'Agora abra um título no Stremio, no aparelho que você quer registrar (em até 10 minutos).';
+      m.textContent = 'Agora abra um título no Stremio no aparelho que quer registrar.';
       var t0 = Date.now();
       pollReg = setInterval(function(){
         fetch('/registrar-status').then(function(r){ return r.json(); }).then(function(st){
-          if (!st.pendente) { clearInterval(pollReg); m.textContent = 'Registrado! Esse aparelho agora usa esta configuração.'; }
+          if (!st.pendente) { clearInterval(pollReg); m.textContent = 'Registrado com sucesso!'; }
         }).catch(function(){});
       }, 3000);
     }).catch(function(){ m.textContent = 'Não foi possível iniciar.'; });
@@ -762,79 +761,86 @@ const RESERVADOS = new Set(['configure', 'manifest.json', 'stream', 'meta', 'hea
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders });
-    }
-
-    const url = new URL(request.url);
-    const pathname = url.pathname;
-    const partes = pathname.split('/').filter(Boolean);
-    const host = url.host;
-    const protocol = url.protocol.replace(':', '');
-
-    if (!partes.length) {
-      return Response.redirect(`${url.origin}/configure`, 302);
-    }
-    if (partes[0] === 'health') return json({ ok: true });
-
-    const cfgB64 = RESERVADOS.has(partes[0]) ? '' : partes.shift();
-    const cfg = aplicarPerfil(lerConfig(cfgB64), request, partes[0] === 'meta' || partes[0] === 'stream');
-    const dec = (s) => decodeURIComponent((s || '').replace(/\.json$/, ''));
-
-    if (partes[0] === 'configure') {
-      return new Response(paginaConfig(cfg, host, protocol), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-    }
-    if (partes[0] === 'registrar') {
-      const ip = ipDe(request);
-      const c = lerConfig(dec(partes[1]));
-      pendentes.set(ip, { config: c, t: Date.now() });
-      return json({ ok: true, ip, config: c });
-    }
-    if (partes[0] === 'registrar-status') return json({ pendente: pareamentoAtivo(ipDe(request)) });
-
-    if (partes[0] === 'manifest.json') return json(manifest());
-
-    if (partes[0] === 'meta') {
-      const tipo = dec(partes[1]);
-      const id = dec(partes[2]);
-      if (!paramsOk(tipo, id)) return json({ meta: null });
-      const userAgent = request.headers.get('user-agent') || '';
-      const r = await meta(tipo, id, cfg, userAgent, env);
-      if (!r) return json({ meta: null });
-      return json({ meta: r.meta }, r.incompleto ? 0 : 300);
-    }
-
-    if (partes[0] === 'avaliar') {
-      const tipo = dec(partes[1]);
-      const rawId = dec(partes[2]);
-      if (!paramsOk(tipo, rawId)) return json({ erro: 'parâmetros inválidos' }, 0, 400);
-      const imdb = await resolverImdbId(rawId, tipo, env);
-      if (!imdb || !/^tt\d+$/.test(imdb)) return json({ erro: 'ID inválido' }, 0, 400);
-      const r = await avaliar(imdb, tipo, cfg, env);
-      return json({ imdb, ip: ipDe(request), config: cfg, classificacaoBR: r.br, guia: r.guia, bloqueado: r.motivos.length > 0, motivos: r.motivos });
-    }
-
-    if (partes[0] === 'stream') {
-      const tipo = dec(partes[1]);
-      const rawId = dec(partes[2]);
-      if (!paramsOk(tipo, rawId)) return json({ streams: [] });
-      const imdb = await resolverImdbId(rawId, tipo, env);
-      if (!imdb || !/^tt\d+$/.test(imdb)) return json({ streams: [] });
-      
-      const { motivos } = await avaliar(imdb, tipo, cfg, env);
-      const streams = [];
-
-      if (motivos.length > 0) {
-        streams.push({
-          name: '🔒 BLOQUEADO',
-          description: motivos[0].replace(/\s*\(.*\)\s*$/, ''),
-          externalUrl: `https://www.imdb.com/title/${imdb}/parentalguide/`,
-        });
+    try {
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: corsHeaders });
       }
 
-      return json({ streams });
-    }
+      const url = new URL(request.url);
+      const pathname = url.pathname;
+      const partes = pathname.split('/').filter(Boolean);
+      const host = url.host;
+      const protocol = url.protocol.replace(':', '');
 
-    return json({ erro: 'não encontrado' }, 0, 404);
+      if (!partes.length) {
+        return Response.redirect(`${url.origin}/configure`, 302);
+      }
+      if (partes[0] === 'health') return json({ ok: true });
+
+      const cfgB64 = RESERVADOS.has(partes[0]) ? '' : partes.shift();
+      const cfg = aplicarPerfil(lerConfig(cfgB64), request, partes[0] === 'meta' || partes[0] === 'stream');
+      const dec = (s) => decodeURIComponent((s || '').replace(/\.json$/, ''));
+
+      if (partes[0] === 'configure') {
+        return new Response(paginaConfig(cfg, host, protocol), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }
+      if (partes[0] === 'registrar') {
+        const ip = ipDe(request);
+        const c = lerConfig(dec(partes[1]));
+        pendentes.set(ip, { config: c, t: Date.now() });
+        return json({ ok: true, ip, config: c });
+      }
+      if (partes[0] === 'registrar-status') return json({ pendente: pareamentoAtivo(ipDe(request)) });
+
+      if (partes[0] === 'manifest.json') return json(manifest());
+
+      if (partes[0] === 'meta') {
+        const tipo = dec(partes[1]);
+        const id = dec(partes[2]);
+        if (!paramsOk(tipo, id)) return json({ meta: null });
+        const userAgent = request.headers.get('user-agent') || '';
+        const r = await meta(tipo, id, cfg, userAgent, env);
+        if (!r) return json({ meta: null });
+        return json({ meta: r.meta }, r.incompleto ? 0 : 300);
+      }
+
+      if (partes[0] === 'avaliar') {
+        const tipo = dec(partes[1]);
+        const rawId = dec(partes[2]);
+        if (!paramsOk(tipo, rawId)) return json({ erro: 'parâmetros inválidos' }, 0, 400);
+        const imdb = await resolverImdbId(rawId, tipo, env);
+        if (!imdb || !/^tt\d+$/.test(imdb)) return json({ erro: 'ID inválido' }, 0, 400);
+        const r = await avaliar(imdb, tipo, cfg, env);
+        return json({ imdb, ip: ipDe(request), config: cfg, classificacaoBR: r.br, guia: r.guia, bloqueado: r.motivos.length > 0, motivos: r.motivos });
+      }
+
+      if (partes[0] === 'stream') {
+        const tipo = dec(partes[1]);
+        const rawId = dec(partes[2]);
+        if (!paramsOk(tipo, rawId)) return json({ streams: [] });
+        const imdb = await resolverImdbId(rawId, tipo, env);
+        if (!imdb || !/^tt\d+$/.test(imdb)) return json({ streams: [] });
+        
+        const { motivos } = await avaliar(imdb, tipo, cfg, env);
+        const streams = [];
+
+        if (motivos.length > 0) {
+          streams.push({
+            name: '🔒 BLOQUEADO',
+            description: motivos[0].replace(/\s*\(.*\)\s*$/, ''),
+            externalUrl: `https://www.imdb.com/title/${imdb}/parentalguide/`,
+          });
+        }
+
+        return json({ streams });
+      }
+
+      return json({ erro: 'não encontrado' }, 0, 404);
+    } catch (err) {
+      return new Response(JSON.stringify({ error: err.message, stack: err.stack }), {
+        status: 500,
+        headers: corsHeaders
+      });
+    }
   }
 };
