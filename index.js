@@ -880,11 +880,17 @@ const RESERVADOS = new Set(['configure', 'manifest.json', 'stream', 'meta', 'hea
 
 export default {
   async fetch(request, env) {
-    TMDB_KEY = env.TMDB_KEY || '';
-    MDBLIST_KEY = env.MDBLIST_KEY || '';
+    TMDB_KEY = String(env.TMDB_KEY || '').trim();
+    MDBLIST_KEY = String(env.MDBLIST_KEY || '').trim();
     META_URL = String(env.META_URL || '').replace(/\/+$/, '');
     BLOQUEAR_SEM_INFO = env.BLOQUEAR_SEM_CLASSIFICACAO === '1';
     KV = env.KV || null;
+    if (KV && (!TMDB_KEY || !MDBLIST_KEY)) { // alternativa: chaves guardadas no próprio KV (entradas TMDB_KEY / MDBLIST_KEY)
+      try {
+        if (!TMDB_KEY) TMDB_KEY = String((await KV.get('TMDB_KEY', { cacheTtl: 300 })) || '').trim();
+        if (!MDBLIST_KEY) MDBLIST_KEY = String((await KV.get('MDBLIST_KEY', { cacheTtl: 300 })) || '').trim();
+      } catch {}
+    }
 
     try {
       if (request.method === 'OPTIONS') {
