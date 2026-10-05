@@ -876,7 +876,7 @@ function json(obj, maxAge = 0, status = 200) {
 const TIPOS_OK = new Set(['movie', 'series']);
 function paramsOk(tipo, id) { return TIPOS_OK.has(tipo) && /^[A-Za-z0-9_.:-]{1,100}$/.test(id); }
 
-const RESERVADOS = new Set(['configure', 'manifest.json', 'stream', 'meta', 'health', 'avaliar', 'registrar', 'registrar-status']);
+const RESERVADOS = new Set(['configure', 'manifest.json', 'stream', 'meta', 'health', 'avaliar', 'registrar', 'registrar-status', 'diagnostico']);
 
 export default {
   async fetch(request, env) {
@@ -901,6 +901,18 @@ export default {
       const partes = url.pathname.split('/').filter(Boolean);
       if (!partes.length) return Response.redirect(`${url.origin}/configure`, 302);
       if (partes[0] === 'health') return json({ ok: true });
+
+      if (partes[0] === 'diagnostico') { // mostra se as chaves/KV foram lidas (nunca mostra as chaves)
+        let tmdbTeste = 'TMDB_KEY não definida';
+        let sinopseTeste = null;
+        if (TMDB_KEY) {
+          try { await tmdb('/configuration'); tmdbTeste = 'ok'; } catch (e) { tmdbTeste = 'falhou: ' + String((e && e.message) || e); }
+          if (tmdbTeste === 'ok') {
+            try { sinopseTeste = String((await resumoPtBR('tt0111161')) || '').slice(0, 80) || null; } catch {}
+          }
+        }
+        return json({ tmdb_key_definida: !!TMDB_KEY, tmdb_teste: tmdbTeste, sinopse_teste_pt: sinopseTeste, mdblist_key_definida: !!MDBLIST_KEY, kv_ligado: !!KV }, 0);
+      }
 
       const cfgB64 = RESERVADOS.has(partes[0]) ? '' : partes.shift();
       const cfg = await aplicarPerfil(lerConfig(cfgB64), request, partes[0] === 'meta' || partes[0] === 'stream');
