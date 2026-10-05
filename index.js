@@ -26,10 +26,10 @@ const CATEGORIAS = [
 
 const CFG_PADRAO = { max: { sexo: 0, violencia: 1, palavroes: 0, drogas: 1, susto: 1 }, idade: 18 };
 
-let cache = { guias: {}, br: {}, mdb: {}, ibr: {} };
+let cache = { guias: {}, br: {}, mdb: {}, ibr: {}, res: {} };
 // Cache só em memória (o Worker não tem disco). Limita o tamanho para não crescer sem fim.
 function salvar() {
-  for (const k of ['guias', 'br', 'mdb', 'ibr']) {
+  for (const k of ['guias', 'br', 'mdb', 'ibr', 'res']) {
     if (cache[k] && Object.keys(cache[k]).length > 5000) cache[k] = {};
   }
 }
@@ -199,23 +199,29 @@ async function acharTMDB(imdbId) {
   return f;
 }
 
+// Retorna o texto em PT-BR, null (o TMDB não tem sinopse em PT-BR) ou undefined (o TMDB falhou: não guarda).
 async function resumoPtBR(imdbId) {
   if (!TMDB_KEY) return null;
+  const c = await cacheLer('res', imdbId);
+  if (c && Date.now() - c.t < (c.v ? GUIA_TTL : NULO_TTL)) return c.v;
   try {
     const f = await acharTMDB(imdbId);
     const movie = (f.movie_results || [])[0];
     const tv = (f.tv_results || [])[0];
 
+    let v = null;
     if (movie) {
       const detalhe = await tmdb(`/movie/${movie.id}`);
-      if (detalhe && detalhe.overview) return detalhe.overview;
+      if (detalhe && detalhe.overview) v = detalhe.overview;
     }
-    if (tv) {
+    if (!v && tv) {
       const detalhe = await tmdb(`/tv/${tv.id}`);
-      if (detalhe && detalhe.overview) return detalhe.overview;
+      if (detalhe && detalhe.overview) v = detalhe.overview;
     }
-    return (movie && movie.overview) || (tv && tv.overview) || null;
-  } catch { return null; }
+    if (!v) v = (movie && movie.overview) || (tv && tv.overview) || null;
+    await cacheGravar('res', imdbId, { t: Date.now(), v }, v ? GUIA_TTL : NULO_TTL);
+    return v;
+  } catch { return undefined; }
 }
 
 async function classificacaoTMDB(imdbId) {
@@ -729,7 +735,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
     }
   }
 
-  return { meta: base, bloqueado, motivos, incompleto: guia === undefined || baseFraca };
+  return { meta: base, bloqueado, motivos, incompleto: guia === undefined || baseFraca || resumo === undefined };
 }
 
 function manifest() {
