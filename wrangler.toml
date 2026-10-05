@@ -2,8 +2,12 @@ name = "controle-de-improprio"
 main = "index.js"
 compatibility_date = "2026-01-01"
 
-[vars]
-# Podes definir as tuas chaves aqui ou diretamente no painel da Cloudflare (em Settings > Variables)
-# TMDB_KEY = "a_tua_chave_tmdb"
-# MDBLIST_KEY = "a_tua_chave_mdblist"
-# BLOQUEAR_SEM_CLASSIFICACAO = "0"
+# Mantém no deploy as variáveis/secrets cadastrados no painel (TMDB_KEY, MDBLIST_KEY...)
+keep_vars = true
+
+# OPCIONAL: guarda os aparelhos registrados de forma permanente.
+# 1) No painel: Storage & Databases > KV > Create namespace (nome: controle-kv)
+# 2) Copie o ID dele, cole abaixo e tire o "#" das 3 linhas.
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "COLE_AQUI_O_ID_DO_NAMESPACE"
