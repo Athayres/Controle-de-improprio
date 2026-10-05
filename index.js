@@ -26,11 +26,27 @@ const CATEGORIAS = [
 
 const CFG_PADRAO = { max: { sexo: 0, violencia: 1, palavroes: 0, drogas: 1, susto: 1 }, idade: 18 };
 
-let cache = { guias: {}, br: {}, mdb: {} };
+let cache = { guias: {}, br: {}, mdb: {}, ibr: {} };
 // Cache só em memória (o Worker não tem disco). Limita o tamanho para não crescer sem fim.
 function salvar() {
-  for (const k of ['guias', 'br', 'mdb']) {
+  for (const k of ['guias', 'br', 'mdb', 'ibr']) {
     if (cache[k] && Object.keys(cache[k]).length > 5000) cache[k] = {};
+  }
+}
+// Com o binding KV o cache sobrevive entre os "reinícios" do Worker (como o cache.json do Render).
+async function cacheLer(tipo, id) {
+  let v = cache[tipo][id];
+  if (v === undefined && KV) {
+    try { v = await KV.get('c:' + tipo + ':' + id, 'json'); } catch { v = null; }
+    if (v) cache[tipo][id] = v;
+  }
+  return v || undefined;
+}
+async function cacheGravar(tipo, id, v, ttlMs) {
+  cache[tipo][id] = v;
+  salvar();
+  if (KV) {
+    try { await KV.put('c:' + tipo + ':' + id, JSON.stringify(v), { expirationTtl: Math.max(60, Math.ceil(ttlMs / 1000)) }); } catch {}
   }
 }
 
@@ -125,9 +141,20 @@ async function tmdb(caminho, params = {}) {
   u.searchParams.set('api_key', TMDB_KEY);
   u.searchParams.set('language', 'pt-BR');
   for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
-  const r = await fetch(u, { signal: AbortSignal.timeout(10000) });
-  if (!r.ok) throw new Error('TMDB ' + r.status);
-  return r.json();
+  let erro = null;
+  for (let t = 0; t < 3; t++) {
+    if (t) await new Promise((ok) => setTimeout(ok, t * 400));
+    try {
+      const r = await fetch(u, { signal: AbortSignal.timeout(10000) });
+      if (r.ok) return await r.json();
+      erro = new Error('TMDB ' + r.status);
+      if (r.status !== 429 && r.status < 500) break; // erro definitivo (ex.: 404): não repete
+    } catch (e) {
+      erro = e;
+      if (e && e.name === 'TimeoutError') break; // não espera outro timeout inteiro
+    }
+  }
+  throw erro;
 }
 
 async function resolverImdbId(id, tipo) {
@@ -193,7 +220,7 @@ async function resumoPtBR(imdbId) {
 
 async function classificacaoTMDB(imdbId) {
   if (!TMDB_KEY) return null;
-  const c = cache.br[imdbId];
+  const c = await cacheLer('br', imdbId);
   if (typeof c === 'string') return c; // formato antigo (valor direto)
   if (c && typeof c === 'object' && Date.now() - c.t < (c.v ? GUIA_TTL : NULO_TTL)) return c.v;
   try {
@@ -209,8 +236,7 @@ async function classificacaoTMDB(imdbId) {
       const p = d.results.find((x) => x.iso_3166_1 === 'BR');
       br = p ? p.rating || null : null;
     }
-    cache.br[imdbId] = { t: Date.now(), v: br };
-    salvar();
+    await cacheGravar('br', imdbId, { t: Date.now(), v: br }, br ? GUIA_TTL : NULO_TTL);
     return br;
   } catch { return null; }
 }
@@ -342,7 +368,7 @@ const guiasFalhas = new Map();
 const FALHA_TTL = 2 * 60 * 1000;
 
 async function buscarGuia(imdbId) {
-  const c = cache.guias[imdbId];
+  const c = await cacheLer('guias', imdbId);
   if (c && Date.now() - c.t < (c.g ? GUIA_TTL : NULO_TTL)) return c.g;
   if ((guiasFalhas.get(imdbId) || 0) > Date.now()) return undefined;
   const r = await consultarIMDb(imdbId);
@@ -351,8 +377,7 @@ async function buscarGuia(imdbId) {
     guiasFalhas.set(imdbId, Date.now() + FALHA_TTL);
     return undefined;
   }
-  cache.guias[imdbId] = { t: Date.now(), g: r.guia };
-  salvar();
+  await cacheGravar('guias', imdbId, { t: Date.now(), g: r.guia }, r.guia ? GUIA_TTL : NULO_TTL);
   return r.guia;
 }
 
@@ -423,8 +448,7 @@ function faixaDoMDBList(d) {
 
 async function classificacaoMDBList(imdbId, tipo) {
   if (!MDBLIST_KEY || Date.now() < mdbPausaAte) return null;
-  cache.mdb = cache.mdb || {};
-  const c = cache.mdb[imdbId];
+  const c = await cacheLer('mdb', imdbId);
   if (c && Date.now() - c.t < (c.v ? GUIA_TTL : MDB_NULO_TTL)) return c.v;
   const r = await baixarMDBList(imdbId, tipo);
   if (r.status === 429 || (r.json && r.json.response === false && /limit/i.test(String(r.json.error || '')))) {
@@ -433,12 +457,52 @@ async function classificacaoMDBList(imdbId, tipo) {
   }
   if (r.status !== 200 || !r.json) return null;
   const v = faixaDoMDBList(r.json);
-  cache.mdb[imdbId] = { t: Date.now(), v };
-  salvar();
+  await cacheGravar('mdb', imdbId, { t: Date.now(), v }, v ? GUIA_TTL : MDB_NULO_TTL);
   return v;
 }
 
+// 1ª fonte: classificação do Brasil cadastrada no próprio IMDb
+const IBR_QUERY = 'query($id: ID!){ title(id:$id){ certificates(first: 250){ edges{ node{ rating country{ id } } } } } }';
+
+function faixaBRdoIMDb(rating) {
+  const t = String(rating || '').trim();
+  if (/^(l|livre)$/i.test(t)) return 'L';
+  const m = t.match(/^(\d{1,2})\b/);
+  return m && [10, 12, 14, 16, 18].includes(Number(m[1])) ? m[1] : null;
+}
+
+let ibrPausaAte = 0;
+async function classificacaoIMDb(imdbId) {
+  const c = await cacheLer('ibr', imdbId);
+  if (c && Date.now() - c.t < (c.v ? GUIA_TTL : NULO_TTL)) return c.v;
+  if (Date.now() < ibrPausaAte) return null; // IMDb falhou há pouco: vai direto para o TMDB
+  try {
+    const r = await fetch('https://api.graphql.imdb.com/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': UA, Origin: 'https://www.imdb.com', Referer: 'https://www.imdb.com/' },
+      body: JSON.stringify({ query: IBR_QUERY, variables: { id: imdbId } }),
+      signal: AbortSignal.timeout(6000),
+    });
+    const j = await r.json();
+    const edges = j && j.data && j.data.title && j.data.title.certificates && j.data.title.certificates.edges;
+    if (!Array.isArray(edges)) { ibrPausaAte = Date.now() + 5 * 60 * 1000; return null; } // erro/bloqueio: não guarda, segue para o TMDB
+    const num = (f) => (f === 'L' ? 0 : Number(f));
+    let melhor = null;
+    for (const e of edges) {
+      const n = e && e.node;
+      if (!n || !n.country || String(n.country.id).toUpperCase() !== 'BR') continue;
+      const f = faixaBRdoIMDb(n.rating);
+      if (f !== null && (melhor === null || num(f) > num(melhor))) melhor = f; // se houver mais de uma, vale a mais restrita
+    }
+    await cacheGravar('ibr', imdbId, { t: Date.now(), v: melhor }, melhor ? GUIA_TTL : NULO_TTL);
+    return melhor;
+  } catch { return null; }
+}
+
+// ordem: 1) IMDb  2) TMDB  3) MDBList
 async function classificacaoBR(imdbId, tipo) {
+  const im = await classificacaoIMDb(imdbId);
+  if (im) return im;
   const tm = await classificacaoTMDB(imdbId);
   if (tm) return tm;
   return classificacaoMDBList(imdbId, tipo);
@@ -560,16 +624,22 @@ async function meta(tipo, id, cfg, userAgent = '') {
   const imdb = await resolverImdbId(id, tipo);
   if (!imdb || !/^tt\d+$/.test(imdb)) return null;
 
+  let baseFraca = false;
   const buscarBase = async () => {
     const chave = `${tipo}|${id}|${imdb}`;
     const c = baseCache.get(chave);
     if (c && Date.now() - c.t < BASE_TTL) return structuredClone(c.m);
 
     const pegar = async (url) => {
-      try {
-        const r = await fetch(url, { signal: AbortSignal.timeout(BASE_TIMEOUT) });
-        if (r.ok) { const m = (await r.json()).meta; if (m) return m; }
-      } catch {}
+      for (let t = 0; t < 2; t++) { // repete uma vez se falhar rápido
+        try {
+          const r = await fetch(url, { signal: AbortSignal.timeout(BASE_TIMEOUT) });
+          if (r.ok) { const m = (await r.json()).meta; if (m) return m; }
+          if (r.status !== 429 && r.status < 500) break;
+        } catch (e) {
+          if (e && e.name === 'TimeoutError') break;
+        }
+      }
       return null;
     };
     // TMDB (PT-BR) e Cinemeta saem em paralelo; o AIOMetadata só entra se o TMDB não responder
@@ -585,9 +655,11 @@ async function meta(tipo, id, cfg, userAgent = '') {
       m = rs.find(Boolean) || null;
     }
     if (!m) m = await cinemeta;
+    const completa = !!m;
     if (!m && ov) m = { id: imdb, type: tipo };
     if (m && ov) aplicarTmdb(m, ov);
-    if (m && !(usaTmdb && !ov)) {
+    if (!completa || (usaTmdb && !ov)) baseFraca = true;
+    if (m && completa && !(usaTmdb && !ov)) {
       if (baseCache.size >= 500) baseCache.clear();
       baseCache.set(chave, { t: Date.now(), m: structuredClone(m) });
     }
@@ -600,6 +672,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
     resumoPtBR(imdb).catch(() => null),
   ]);
   
+  if (!baseMeta) baseFraca = true;
   const base = baseMeta || { id: id, type: tipo, name: imdb, description: '', genres: [] };
   const bloqueado = motivos.length > 0;
 
@@ -656,7 +729,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
     }
   }
 
-  return { meta: base, bloqueado, motivos, incompleto: guia === undefined };
+  return { meta: base, bloqueado, motivos, incompleto: guia === undefined || baseFraca };
 }
 
 function manifest() {
