@@ -566,7 +566,7 @@ async function meta(tipo, id, cfg, userAgent, env) {
   ]);
   
   const base = baseMeta || { id: id, type: tipo, name: imdb, description: '', genres: [] };
-  const { motivos } = motivosBloqueio(cfg, br, guia, env);
+  const motivos = motivosBloqueio(cfg, br, guia, env);
   const bloqueado = motivos.length > 0;
 
   let classificacaoFinal = br;
