@@ -1,4 +1,4 @@
-name = "stremio-classifica-improprio"
+name = "controle-de-improprio"
 main = "index.js"
 compatibility_date = "2026-01-01"
 
