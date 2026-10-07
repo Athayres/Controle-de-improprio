@@ -64,7 +64,9 @@ function normalizarConfig(j) {
   const cfg = JSON.parse(JSON.stringify(CFG_PADRAO));
   if (!j || typeof j !== 'object') return cfg;
   for (const c of CATEGORIAS) {
-    const v = Number(j.max && j.max[c.key]);
+    const bruto = j.max && j.max[c.key];
+    if (bruto == null || bruto === '') continue; // vazio/null: mantém o padrão
+    const v = Number(bruto);
     if (Number.isInteger(v) && v >= 0 && v <= 3) cfg.max[c.key] = v;
   }
   const idade = Number(j.idade);
@@ -660,7 +662,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
       return null;
     };
     // TMDB (PT-BR) e Cinemeta saem em paralelo; o AIOMetadata só entra se o TMDB não responder
-    const usaTmdb = !!TMDB_KEY && id === imdb;
+    const usaTmdb = !!TMDB_KEY && id.replace(/^gpbloq:/, '') === imdb;
     const tm = usaTmdb ? tmdbOverlay(imdb, tipo) : Promise.resolve(null);
     const cinemeta = pegar(`https://v3-cinemeta.strem.io/meta/${tipo}/${imdb}.json`);
     const aio = META_URL
