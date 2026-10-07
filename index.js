@@ -565,12 +565,15 @@ async function tmdbOverlay(imdb, tipo) {
     const f = await acharTMDB(imdb);
     const r = ((tv ? f.tv_results : f.movie_results) || [])[0];
     if (!r || !r.id) return null;
-    const d = await tmdb(`/${tv ? 'tv' : 'movie'}/${r.id}`, { append_to_response: 'images', include_image_language: 'pt,null' });
+    const d = await tmdb(`/${tv ? 'tv' : 'movie'}/${r.id}`, { append_to_response: 'images', include_image_language: 'pt,en,null' });
     // só imagem em português do Brasil; sem ela, null (fica a original)
     const emPt = (lista) => (Array.isArray(lista) ? lista : []).find((x) => x && x.iso_639_1 === 'pt' && x.iso_3166_1 === 'BR' && x.file_path) || null;
     const imgs = d.images || {};
     const posterPt = emPt(imgs.posters);
-    const logoPt = emPt(imgs.logos);
+    // logo: pt-BR se existir; senão o padrão do TMDB (o mais bem votado, sem português de Portugal); senão fica o do Cinemeta
+    const logoPt = emPt(imgs.logos)
+      || (Array.isArray(imgs.logos) ? imgs.logos : []).find((x) => x && x.file_path && !(x.iso_639_1 === 'pt' && x.iso_3166_1 !== 'BR'))
+      || null;
     const ov = {
       name: (tv ? d.name : d.title) || '',
       logo: logoPt ? TMDB_IMG + 'w500' + logoPt.file_path : '',
@@ -660,18 +663,21 @@ async function meta(tipo, id, cfg, userAgent = '') {
     const usaTmdb = !!TMDB_KEY && id === imdb;
     const tm = usaTmdb ? tmdbOverlay(imdb, tipo) : Promise.resolve(null);
     const cinemeta = pegar(`https://v3-cinemeta.strem.io/meta/${tipo}/${imdb}.json`);
+    const aio = META_URL
+      ? Promise.all([id, imdb].filter((v, i, a) => a.indexOf(v) === i).map((cid) => pegar(`${META_URL}/meta/${tipo}/${cid}.json`))).then((rs) => rs.find(Boolean) || null)
+      : Promise.resolve(null);
     let m = null;
     const ov = await tm;
     if (ov) m = await cinemeta;
-    if (!m && META_URL) {
-      const ids = [id, imdb].filter((v, i, a) => a.indexOf(v) === i);
-      const rs = await Promise.all(ids.map((cid) => pegar(`${META_URL}/meta/${tipo}/${cid}.json`)));
-      m = rs.find(Boolean) || null;
-    }
+    if (!m && META_URL) m = await aio; // reserva: se o Cinemeta falhar, o AIOMetadata vira a base
     if (!m) m = await cinemeta;
     const completa = !!m;
     if (!m && ov) m = { id: imdb, type: tipo };
     if (m && ov) aplicarTmdb(m, ov);
+    if (m && META_URL) { // logo: o do AIOMetadata passa por cima (senão fica o do TMDB, senão o do Cinemeta)
+      const am = await aio;
+      if (am && am !== m && am.logo) m.logo = am.logo;
+    }
     if (!completa || (usaTmdb && !ov)) baseFraca = true;
     if (m && completa && !(usaTmdb && !ov)) {
       if (baseCache.size >= 500) baseCache.clear();
@@ -749,7 +755,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
 function manifest(origem) {
   return {
     id: 'community.guiadospais.ptbr',
-    version: '2.3.2',
+    version: '2.3.3',
     name: 'Controle de Impróprios',
     logo: origem + LOGO,
     description: 'Exibe a classificação indicativa brasileira e o guia do IMDb diretamente no Stremio.',
@@ -890,11 +896,12 @@ export default {
   async fetch(request, env) {
     TMDB_KEY = String(env.TMDB_KEY || '').trim();
     MDBLIST_KEY = String(env.MDBLIST_KEY || '').trim();
-    META_URL = String(env.META_URL || '').replace(/\/+$/, '');
+    META_URL = String(env.META_URL || '').trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
     BLOQUEAR_SEM_INFO = env.BLOQUEAR_SEM_CLASSIFICACAO === '1';
     KV = env.KV || null;
-    if (KV && (!TMDB_KEY || !MDBLIST_KEY)) { // alternativa: chaves guardadas no próprio KV (entradas TMDB_KEY / MDBLIST_KEY)
+    if (KV && (!TMDB_KEY || !MDBLIST_KEY || !META_URL)) { // alternativa: chaves guardadas no próprio KV (entradas TMDB_KEY / MDBLIST_KEY / META_URL)
       try {
+        if (!META_URL) META_URL = String((await KV.get('META_URL', { cacheTtl: 300 })) || '').trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
         if (!TMDB_KEY) TMDB_KEY = String((await KV.get('TMDB_KEY', { cacheTtl: 300 })) || '').trim();
         if (!MDBLIST_KEY) MDBLIST_KEY = String((await KV.get('MDBLIST_KEY', { cacheTtl: 300 })) || '').trim();
       } catch {}
