@@ -11,6 +11,6 @@ binding = "KV"
 id = "1cd06a5363d1444fa7bcf08be3926a6f"
 
 # Ligação interna com o Worker do verificador ("Autenticado"). A Cloudflare não deixa um Worker chamar outro pelo workers.dev (erro 1042).
-[[services]]
-binding = "AUTENTICADO"
-service = "verificador-videos"
+# [[services]]
+# binding = "AUTENTICADO"
+# service = "verificador-videos"
