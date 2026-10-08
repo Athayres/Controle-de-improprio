@@ -9,10 +9,3 @@ keep_vars = true
 [[kv_namespaces]]
 binding = "KV"
 id = "1cd06a5363d1444fa7bcf08be3926a6f"
-
-
-# Ligação interna com o Worker do verificador-videos (a Cloudflare bloqueia Worker chamando Worker pelo workers.dev: erro 1042).
-# "service" é o nome do Worker do verificador (o que aparece no endereço dele: verificador-videos.<sua-conta>.workers.dev).
-[[services]]
-binding = "VERIFICADOR"
-service = "verificador-videos"
