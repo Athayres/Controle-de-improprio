@@ -5,10 +5,14 @@
  * Variáveis (Settings > Variables and Secrets, tipo Secret):
  *   TMDB_KEY, MDBLIST_KEY            (META_URL e BLOQUEAR_SEM_CLASSIFICACAO são opcionais)
  * Opcional: binding KV chamado "KV" para guardar os aparelhos registrados de forma permanente.
+ * Opcional (junta com o verificador, "Autenticado"): AUTENTICADO_URL = link do verificador sem o /manifest.json, e a ligação de
+ *   serviço AUTENTICADO (veja o wrangler.toml). O Controle lê o meta do verificador e junta a troca de id (vrf:) ao dele.
  */
 let TMDB_KEY = '';
 let MDBLIST_KEY = '';
 let META_URL = '';
+let AUTENTICADO_URL = '';
+let AUTENTICADO_BIND = null;
 let BLOQUEAR_SEM_INFO = false;
 let KV = null;
 const GUIA_TTL = 30 * 24 * 3600 * 1000;
@@ -754,10 +758,43 @@ async function meta(tipo, id, cfg, userAgent = '') {
   return { meta: base, bloqueado, motivos, incompleto: guia === undefined || baseFraca || resumo === undefined };
 }
 
+// Lê o meta do verificador ("Autenticado") e junta ao do Controle só a troca de id: tt... -> vrf:tt... (episódios; filme: id e defaultVideoId).
+// Se o verificador não responder, o meta do Controle segue como está (sem troca).
+const autCache = new Map();
+async function juntarAutenticado(m, tipo, id, userAgent, ip) {
+  try {
+    const chave = `${tipo}|${id}`;
+    let vm;
+    const c = autCache.get(chave);
+    if (c && Date.now() - c.t < 5 * 60 * 1000) vm = c.m;
+    else {
+      const alvo = `${AUTENTICADO_URL}/meta/${tipo}/${encodeURIComponent(id)}.json`;
+      const cab = { 'X-Via': 'controle', Accept: 'application/json', 'User-Agent': userAgent || UA };
+      if (ip) cab['X-Forwarded-For'] = ip;
+      const r = AUTENTICADO_BIND ? await AUTENTICADO_BIND.fetch(alvo, { headers: cab }) : await fetch(alvo, { headers: cab, signal: AbortSignal.timeout(4000) });
+      if (!r.ok) return false;
+      vm = (await r.json()).meta;
+      if (!vm || typeof vm !== 'object') return false;
+      if (autCache.size >= 500) autCache.clear();
+      autCache.set(chave, { t: Date.now(), m: vm });
+    }
+    const idOrig = String(m.id);
+    if (Array.isArray(m.videos) && Array.isArray(vm.videos)) {
+      const trocados = new Set(vm.videos.map((v) => v && v.id));
+      m.videos = m.videos.map((v) => (v && typeof v.id === 'string' && /^tt\d+:\d+:\d+$/.test(v.id) && trocados.has('vrf:' + v.id) ? { ...v, id: 'vrf:' + v.id } : v));
+    }
+    if (tipo === 'movie' && /^tt\d+$/.test(idOrig)) {
+      if (vm.id === 'vrf:' + idOrig) m.id = vm.id;
+      if (vm.behaviorHints && vm.behaviorHints.defaultVideoId === 'vrf:' + idOrig) m.behaviorHints = { ...m.behaviorHints, defaultVideoId: vm.behaviorHints.defaultVideoId };
+    }
+    return true;
+  } catch { return false; }
+}
+
 function manifest(origem) {
   return {
     id: 'community.guiadospais.ptbr',
-    version: '2.3.3',
+    version: '2.4.0',
     name: 'Controle de Impróprios',
     logo: origem + LOGO,
     description: 'Exibe a classificação indicativa brasileira e o guia do IMDb diretamente no Stremio.',
@@ -901,6 +938,9 @@ export default {
     META_URL = String(env.META_URL || '').trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
     BLOQUEAR_SEM_INFO = env.BLOQUEAR_SEM_CLASSIFICACAO === '1';
     KV = env.KV || null;
+    AUTENTICADO_URL = String(env.AUTENTICADO_URL || '').trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
+    AUTENTICADO_BIND = env.AUTENTICADO && typeof env.AUTENTICADO.fetch === 'function' ? env.AUTENTICADO : null;
+    if (KV && !AUTENTICADO_URL) { try { AUTENTICADO_URL = String((await KV.get('AUTENTICADO_URL', { cacheTtl: 300 })) || '').trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, ''); } catch {} }
     if (KV && (!TMDB_KEY || !MDBLIST_KEY || !META_URL)) { // alternativa: chaves guardadas no próprio KV (entradas TMDB_KEY / MDBLIST_KEY / META_URL)
       try {
         if (!META_URL) META_URL = String((await KV.get('META_URL', { cacheTtl: 300 })) || '').trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
@@ -934,7 +974,7 @@ export default {
             try { sinopseTeste = String((await resumoPtBR('tt0111161')) || '').slice(0, 80) || null; } catch {}
           }
         }
-        return json({ tmdb_key_definida: !!TMDB_KEY, tmdb_teste: tmdbTeste, sinopse_teste_pt: sinopseTeste, mdblist_key_definida: !!MDBLIST_KEY, kv_ligado: !!KV }, 0);
+        return json({ tmdb_key_definida: !!TMDB_KEY, tmdb_teste: tmdbTeste, sinopse_teste_pt: sinopseTeste, mdblist_key_definida: !!MDBLIST_KEY, kv_ligado: !!KV, autenticado_url_definida: !!AUTENTICADO_URL, ligacao_autenticado: AUTENTICADO_BIND ? 'ativa' : 'não criada' }, 0);
       }
 
       const cfgB64 = RESERVADOS.has(partes[0]) ? '' : partes.shift();
@@ -966,7 +1006,12 @@ export default {
         const userAgent = request.headers.get('user-agent') || '';
         const r = await meta(tipo, id, cfg, userAgent);
         if (!r) return json({ meta: null }, 0);
-        return json({ meta: r.meta }, r.incompleto ? 0 : 300);
+        // junta o meta do verificador (troca de id vrf:), exceto nos bloqueados e quando o pedido já veio do próprio verificador (evita loop)
+        let unido = null;
+        if (!r.bloqueado && AUTENTICADO_URL && /^tt\d+$/.test(id) && !/autenticado/i.test(request.headers.get('x-via') || '')) {
+          unido = await juntarAutenticado(r.meta, tipo, id, userAgent, ipDe(request));
+        }
+        return json({ meta: r.meta }, r.incompleto || unido === false ? 0 : 300);
       }
 
       if (partes[0] === 'avaliar') {
