@@ -1,6 +1,8 @@
 name = "controle-de-improprio"
 main = "index.js"
 compatibility_date = "2026-01-01"
+# Deixa este Worker chamar o outro pelo endereço normal (workers.dev), sem ligação interna: evita o erro 1042 e o ciclo.
+compatibility_flags = ["global_fetch_strictly_public"]
 
 # Mantém no deploy as variáveis/secrets cadastrados no painel (TMDB_KEY, MDBLIST_KEY...)
 keep_vars = true
@@ -9,8 +11,3 @@ keep_vars = true
 [[kv_namespaces]]
 binding = "KV"
 id = "1cd06a5363d1444fa7bcf08be3926a6f"
-
-# Ligação interna com o Worker do verificador ("Autenticado"). A Cloudflare não deixa um Worker chamar outro pelo workers.dev (erro 1042).
-# [[services]]
-# binding = "AUTENTICADO"
-# service = "verificador-videos"

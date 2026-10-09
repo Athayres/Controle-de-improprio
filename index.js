@@ -974,7 +974,7 @@ export default {
             try { sinopseTeste = String((await resumoPtBR('tt0111161')) || '').slice(0, 80) || null; } catch {}
           }
         }
-        return json({ tmdb_key_definida: !!TMDB_KEY, tmdb_teste: tmdbTeste, sinopse_teste_pt: sinopseTeste, mdblist_key_definida: !!MDBLIST_KEY, kv_ligado: !!KV, autenticado_url_definida: !!AUTENTICADO_URL, ligacao_autenticado: AUTENTICADO_BIND ? 'ativa' : 'não criada' }, 0);
+        return json({ tmdb_key_definida: !!TMDB_KEY, tmdb_teste: tmdbTeste, sinopse_teste_pt: sinopseTeste, mdblist_key_definida: !!MDBLIST_KEY, kv_ligado: !!KV, autenticado_url_definida: !!AUTENTICADO_URL, ligacao_autenticado: AUTENTICADO_BIND ? 'ativa (ligação de serviço)' : 'não usada (chamando pelo endereço normal)' }, 0);
       }
 
       const cfgB64 = RESERVADOS.has(partes[0]) ? '' : partes.shift();
