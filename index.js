@@ -794,7 +794,7 @@ async function juntarAutenticado(m, tipo, id, userAgent, ip) {
 function manifest(origem) {
   return {
     id: 'community.guiadospais.ptbr',
-    version: '2.4.0',
+    version: '2.4.1',
     name: 'Controle de Impróprios',
     logo: origem + LOGO,
     description: 'Exibe a classificação indicativa brasileira e o guia do IMDb diretamente no Stremio.',
