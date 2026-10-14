@@ -1006,6 +1006,9 @@ export default {
         const userAgent = request.headers.get('user-agent') || '';
         const r = await meta(tipo, id, cfg, userAgent);
         if (!r) return json({ meta: null }, 0);
+        // Série sem episódios (a base do Cinemeta falhou ou não tem a série): não responde, para o Stremio usar o meta do próximo addon
+        // (AIOMetadata) em vez de mostrar a série vazia. Sem isso, o meta vazio do Controle ganhava dos outros por estar no topo.
+        if (tipo === 'series' && !(Array.isArray(r.meta.videos) && r.meta.videos.length)) return json({ meta: null }, 0, 404);
         // junta o meta do verificador (troca de id vrf:), exceto nos bloqueados e quando o pedido já veio do próprio verificador (evita loop)
         let unido = null;
         if (!r.bloqueado && AUTENTICADO_URL && /^tt\d+$/.test(id) && !/autenticado/i.test(request.headers.get('x-via') || '')) {
