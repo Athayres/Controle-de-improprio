@@ -11,3 +11,6 @@ keep_vars = true
 [[kv_namespaces]]
 binding = "KV"
 id = "1cd06a5363d1444fa7bcf08be3926a6f"
+
+[observability]
+enabled = true
