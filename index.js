@@ -604,7 +604,6 @@ async function tmdbOverlay(imdb, tipo) {
               name: e.name || '',
               overview: e.overview || '',
               still: e.still_path ? TMDB_IMG + 'w300' + e.still_path : '',
-              released: e.air_date || '',
             };
           }
         }
@@ -614,26 +613,7 @@ async function tmdbOverlay(imdb, tipo) {
   } catch { return null; }
 }
 
-function aplicarTmdb(m, ov, imdb) {
-  // Se a fonte principal não trouxe episódios, constrói a lista a partir dos dados já consultados no TMDB.
-  // IDs seguem o formato Stremio para episódios: tt...:temporada:episódio.
-  if (Array.isArray(ov.eps) && ov.eps.length) ov.eps = Object.fromEntries(ov.eps);
-  if (ov.eps && typeof ov.eps === 'object' && !Array.isArray(m.videos)) m.videos = [];
-  if (ov.eps && typeof ov.eps === 'object' && Array.isArray(m.videos) && m.videos.length === 0) {
-    m.videos = Object.entries(ov.eps).map(([chave, e]) => {
-      const [season, episode] = chave.split(':').map(Number);
-      return {
-        id: `${imdb}:${season}:${episode}`,
-        title: e.name || `Episódio ${episode}`,
-        name: e.name || `Episódio ${episode}`,
-        season,
-        episode,
-        released: e.released || undefined,
-        overview: e.overview || '',
-        thumbnail: e.still || undefined,
-      };
-    }).sort((a, b) => a.season - b.season || a.episode - b.episode);
-  }
+function aplicarTmdb(m, ov) {
   // Logo e capa: pt-BR quando existir; senão ficam as originais.
   if (ov.logo) m.logo = ov.logo;
   if (ov.name) m.name = ov.name;
@@ -695,17 +675,11 @@ async function meta(tipo, id, cfg, userAgent = '') {
     let m = null;
     const ov = await tm;
     if (ov) m = await cinemeta;
-    // Para séries, um objeto Cinemeta sem episódios não é uma base válida: tenta AIOMetadata.
-    if (tipo === 'series' && !(m && Array.isArray(m.videos) && m.videos.length) && META_URL) {
-      const alternativa = await aio;
-      if (alternativa && Array.isArray(alternativa.videos) && alternativa.videos.length) m = alternativa;
-      else if (!m && alternativa) m = alternativa;
-    }
     if (!m && META_URL) m = await aio; // reserva: se o Cinemeta falhar, o AIOMetadata vira a base
     if (!m) m = await cinemeta;
     const completa = !!m;
     if (!m && ov) m = { id: imdb, type: tipo };
-    if (m && ov) aplicarTmdb(m, ov, imdb);
+    if (m && ov) aplicarTmdb(m, ov);
     if (m && META_URL) { // logo: o do AIOMetadata passa por cima (senão fica o do TMDB, senão o do Cinemeta)
       const am = await aio;
       if (am && am !== m && am.logo) m.logo = am.logo;
@@ -773,8 +747,8 @@ async function meta(tipo, id, cfg, userAgent = '') {
     }
   }
 
-  // Não altera os IDs dos filmes/episódios por causa da classificação.
-  // Assim, os outros addons continuam recebendo os IDs originais para localizar streams.
+  // Preserva os IDs originais dos filmes e episódios. Prefixos gpbloq: impedem
+  // que addons de terceiros reconheçam os IDs e encontrem seus streams.
 
   return { meta: base, bloqueado, motivos, incompleto: guia === undefined || baseFraca || resumo === undefined };
 }
@@ -1032,7 +1006,7 @@ export default {
         if (tipo === 'series' && !(Array.isArray(r.meta.videos) && r.meta.videos.length)) return json({ meta: null }, 0, 404);
         // junta o meta do verificador (troca de id vrf:), exceto nos bloqueados e quando o pedido já veio do próprio verificador (evita loop)
         let unido = null;
-        if (AUTENTICADO_URL && /^tt\d+$/.test(id) && !/autenticado/i.test(request.headers.get('x-via') || '')) {
+        if (!r.bloqueado && AUTENTICADO_URL && /^tt\d+$/.test(id) && !/autenticado/i.test(request.headers.get('x-via') || '')) {
           unido = await juntarAutenticado(r.meta, tipo, id, userAgent, ipDe(request));
         }
         return json({ meta: r.meta }, r.incompleto || unido === false ? 0 : 300);
@@ -1049,9 +1023,25 @@ export default {
       }
 
       if (partes[0] === 'stream') {
-        // Compatibilidade com chamadas antigas: este addon não procura nem bloqueia streams.
-        // A busca dos arquivos fica inteiramente a cargo dos outros addons instalados.
-        return json({ streams: [] }, 0);
+        const tipo = dec(partes[1]);
+        const rawId = dec(partes[2]);
+        if (!paramsOk(tipo, rawId)) return json({ streams: [] }, 0);
+        const imdb = await resolverImdbId(rawId, tipo);
+        if (!imdb || !/^tt\d+$/.test(imdb)) return json({ streams: [] }, 0);
+
+        const { motivos } = await avaliar(imdb, tipo, cfg);
+        console.log('stream', rawId, '| ip', ipDe(request), '| link', cfgB64.slice(0, 8) || '(sem config)', '| idade', cfg.idade, '| bloqueado', motivos.length > 0);
+        const streams = [];
+
+        if (motivos.length > 0) {
+          streams.push({
+            name: '🔒 BLOQUEADO',
+            description: motivos[0].replace(/\s*\(.*\)\s*$/, ''),
+            externalUrl: `https://www.imdb.com/title/${imdb}/parentalguide/`,
+          });
+        }
+
+        return json({ streams }, 0);
       }
 
       return json({ erro: 'não encontrado' }, 0, 404);
