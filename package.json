@@ -1,8 +1,0 @@
-{
-  "name": "controle-de-improprio",
-  "version": "2.3.0",
-  "private": true,
-  "description": "Addon Stremio: Guia dos Pais do IMDb em PT-BR com limites por categoria (Cloudflare Workers)",
-  "main": "index.js",
-  "type": "module"
-}
