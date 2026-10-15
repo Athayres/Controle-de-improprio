@@ -773,13 +773,8 @@ async function meta(tipo, id, cfg, userAgent = '') {
     }
   }
 
-  if (bloqueado) {
-    if (Array.isArray(base.videos) && base.videos.length) {
-      base.videos = base.videos.map((v) => (v && v.id && !String(v.id).startsWith('gpbloq:') ? { ...v, id: `gpbloq:${v.id}` } : v));
-    } else if (tipo === 'movie') {
-      base.id = id.startsWith('gpbloq:') ? id : `gpbloq:${id}`;
-    }
-  }
+  // Não altera os IDs dos filmes/episódios por causa da classificação.
+  // Assim, os outros addons continuam recebendo os IDs originais para localizar streams.
 
   return { meta: base, bloqueado, motivos, incompleto: guia === undefined || baseFraca || resumo === undefined };
 }
@@ -820,11 +815,11 @@ async function juntarAutenticado(m, tipo, id, userAgent, ip) {
 function manifest(origem) {
   return {
     id: 'community.guiadospais.ptbr',
-    version: '2.4.1',
+    version: '2.4.2',
     name: 'Controle de Impróprios',
     logo: origem + LOGO,
     description: 'Exibe a classificação indicativa brasileira e o guia do IMDb diretamente no Stremio.',
-    resources: ['meta', 'stream'],
+    resources: ['meta'],
     types: ['movie', 'series'],
     idPrefixes: ['tt', 'gpbloq:', 'tvdb:', 'tmdb:', 'tvdbc:', 'aiom.collection:'],
     catalogs: [],
@@ -1037,7 +1032,7 @@ export default {
         if (tipo === 'series' && !(Array.isArray(r.meta.videos) && r.meta.videos.length)) return json({ meta: null }, 0, 404);
         // junta o meta do verificador (troca de id vrf:), exceto nos bloqueados e quando o pedido já veio do próprio verificador (evita loop)
         let unido = null;
-        if (!r.bloqueado && AUTENTICADO_URL && /^tt\d+$/.test(id) && !/autenticado/i.test(request.headers.get('x-via') || '')) {
+        if (AUTENTICADO_URL && /^tt\d+$/.test(id) && !/autenticado/i.test(request.headers.get('x-via') || '')) {
           unido = await juntarAutenticado(r.meta, tipo, id, userAgent, ipDe(request));
         }
         return json({ meta: r.meta }, r.incompleto || unido === false ? 0 : 300);
@@ -1054,25 +1049,9 @@ export default {
       }
 
       if (partes[0] === 'stream') {
-        const tipo = dec(partes[1]);
-        const rawId = dec(partes[2]);
-        if (!paramsOk(tipo, rawId)) return json({ streams: [] }, 0);
-        const imdb = await resolverImdbId(rawId, tipo);
-        if (!imdb || !/^tt\d+$/.test(imdb)) return json({ streams: [] }, 0);
-
-        const { motivos } = await avaliar(imdb, tipo, cfg);
-        console.log('stream', rawId, '| ip', ipDe(request), '| link', cfgB64.slice(0, 8) || '(sem config)', '| idade', cfg.idade, '| bloqueado', motivos.length > 0);
-        const streams = [];
-
-        if (motivos.length > 0) {
-          streams.push({
-            name: '🔒 BLOQUEADO',
-            description: motivos[0].replace(/\s*\(.*\)\s*$/, ''),
-            externalUrl: `https://www.imdb.com/title/${imdb}/parentalguide/`,
-          });
-        }
-
-        return json({ streams }, 0);
+        // Compatibilidade com chamadas antigas: este addon não procura nem bloqueia streams.
+        // A busca dos arquivos fica inteiramente a cargo dos outros addons instalados.
+        return json({ streams: [] }, 0);
       }
 
       return json({ erro: 'não encontrado' }, 0, 404);
