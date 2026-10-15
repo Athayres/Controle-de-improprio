@@ -1,13 +1,16 @@
 name = "controle-de-improprio"
 main = "index.js"
-compatibility_date = "2025-09-01"
-workers_dev = true
+compatibility_date = "2026-01-01"
+# Deixa este Worker chamar o outro pelo endereço normal (workers.dev), sem ligação interna: evita o erro 1042 e o ciclo.
+compatibility_flags = ["global_fetch_strictly_public"]
+
+# Mantém no deploy as variáveis/secrets cadastrados no painel (TMDB_KEY, MDBLIST_KEY...)
+keep_vars = true
+
+# Guarda os aparelhos registrados, o guia dos pais, a classificação e a sinopse de forma permanente.
+[[kv_namespaces]]
+binding = "KV"
+id = "1cd06a5363d1444fa7bcf08be3926a6f"
 
 [observability]
 enabled = true
-
-# Cache e aparelhos registrados.
-# Crie em: Cloudflare > Storage & Databases > KV > Create, e cole o ID abaixo.
-[[kv_namespaces]]
-binding = "KV"
-id = "COLE_AQUI_O_ID_DO_KV"
