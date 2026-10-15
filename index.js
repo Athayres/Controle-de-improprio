@@ -604,6 +604,7 @@ async function tmdbOverlay(imdb, tipo) {
               name: e.name || '',
               overview: e.overview || '',
               still: e.still_path ? TMDB_IMG + 'w300' + e.still_path : '',
+              released: e.air_date || '',
             };
           }
         }
@@ -613,7 +614,26 @@ async function tmdbOverlay(imdb, tipo) {
   } catch { return null; }
 }
 
-function aplicarTmdb(m, ov) {
+function aplicarTmdb(m, ov, imdb) {
+  // Se a fonte principal não trouxe episódios, constrói a lista a partir dos dados já consultados no TMDB.
+  // IDs seguem o formato Stremio para episódios: tt...:temporada:episódio.
+  if (Array.isArray(ov.eps) && ov.eps.length) ov.eps = Object.fromEntries(ov.eps);
+  if (ov.eps && typeof ov.eps === 'object' && !Array.isArray(m.videos)) m.videos = [];
+  if (ov.eps && typeof ov.eps === 'object' && Array.isArray(m.videos) && m.videos.length === 0) {
+    m.videos = Object.entries(ov.eps).map(([chave, e]) => {
+      const [season, episode] = chave.split(':').map(Number);
+      return {
+        id: `${imdb}:${season}:${episode}`,
+        title: e.name || `Episódio ${episode}`,
+        name: e.name || `Episódio ${episode}`,
+        season,
+        episode,
+        released: e.released || undefined,
+        overview: e.overview || '',
+        thumbnail: e.still || undefined,
+      };
+    }).sort((a, b) => a.season - b.season || a.episode - b.episode);
+  }
   // Logo e capa: pt-BR quando existir; senão ficam as originais.
   if (ov.logo) m.logo = ov.logo;
   if (ov.name) m.name = ov.name;
@@ -675,11 +695,17 @@ async function meta(tipo, id, cfg, userAgent = '') {
     let m = null;
     const ov = await tm;
     if (ov) m = await cinemeta;
+    // Para séries, um objeto Cinemeta sem episódios não é uma base válida: tenta AIOMetadata.
+    if (tipo === 'series' && !(m && Array.isArray(m.videos) && m.videos.length) && META_URL) {
+      const alternativa = await aio;
+      if (alternativa && Array.isArray(alternativa.videos) && alternativa.videos.length) m = alternativa;
+      else if (!m && alternativa) m = alternativa;
+    }
     if (!m && META_URL) m = await aio; // reserva: se o Cinemeta falhar, o AIOMetadata vira a base
     if (!m) m = await cinemeta;
     const completa = !!m;
     if (!m && ov) m = { id: imdb, type: tipo };
-    if (m && ov) aplicarTmdb(m, ov);
+    if (m && ov) aplicarTmdb(m, ov, imdb);
     if (m && META_URL) { // logo: o do AIOMetadata passa por cima (senão fica o do TMDB, senão o do Cinemeta)
       const am = await aio;
       if (am && am !== m && am.logo) m.logo = am.logo;
