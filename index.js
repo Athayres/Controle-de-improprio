@@ -1,11 +1,12 @@
 /**
  * Addon Stremio – Controle de Impróprios (Cloudflare Workers)
- * Versão 2.3.0 — mesma lógica do server.js 2.3.0 do Render.
+ * Versão 2.3.1 — mesma lógica do server.js 2.3.0 do Render.
  * O que mudou: servidor Node -> Worker, cache.json -> KV, IP via CF-Connecting-IP.
  *
- * Segredos (Settings > Variables and Secrets, tipo "Secret"):
+ * Segredos (Settings > Variables and Secrets, tipo "Secret"), ou entradas com o mesmo nome no KV:
  *   TMDB_KEY, MDBLIST_KEY (opcional), META_URL (opcional), BLOQUEAR_SEM_CLASSIFICACAO=1 (opcional)
  * Binding KV: KV
+ * Diagnóstico: /diagnostico
  */
 
 const LOGO = 'https://raw.githubusercontent.com/Athayres/IMDB-Conteudo-Classificado/refs/heads/main/logo_family.jpg';
@@ -16,12 +17,25 @@ let META_URL = '';
 let BLOQUEAR_SEM_INFO = false;
 let KV = null;
 
-function init(env) {
-  TMDB_KEY = env.TMDB_KEY || '';
-  MDBLIST_KEY = env.MDBLIST_KEY || '';
-  META_URL = (env.META_URL || '').replace(/\/+$/, '');
-  BLOQUEAR_SEM_INFO = env.BLOQUEAR_SEM_CLASSIFICACAO === '1';
+// Chaves vindas do KV (entradas TMDB_KEY, MDBLIST_KEY, META_URL) quando não estão em Variables and Secrets.
+let kvChaves = { t: 0, TMDB_KEY: '', MDBLIST_KEY: '', META_URL: '' };
+
+async function init(env) {
   KV = env.KV || null;
+  TMDB_KEY = String(env.TMDB_KEY || '').trim();
+  MDBLIST_KEY = String(env.MDBLIST_KEY || '').trim();
+  META_URL = String(env.META_URL || '').trim();
+  BLOQUEAR_SEM_INFO = env.BLOQUEAR_SEM_CLASSIFICACAO === '1';
+  if (KV && (!TMDB_KEY || !MDBLIST_KEY || !META_URL)) {
+    if (Date.now() - kvChaves.t > 5 * 60 * 1000) {
+      const ler = async (k) => String((await KV.get(k).catch(() => null)) || '').trim();
+      kvChaves = { t: Date.now(), TMDB_KEY: await ler('TMDB_KEY'), MDBLIST_KEY: await ler('MDBLIST_KEY'), META_URL: await ler('META_URL') };
+    }
+    TMDB_KEY = TMDB_KEY || kvChaves.TMDB_KEY;
+    MDBLIST_KEY = MDBLIST_KEY || kvChaves.MDBLIST_KEY;
+    META_URL = META_URL || kvChaves.META_URL;
+  }
+  META_URL = META_URL.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
 }
 
 const GUIA_TTL = 30 * 24 * 3600 * 1000;
@@ -615,7 +629,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
     if (!m) m = await cinemeta;
     if (!m && ov) m = { id: imdb, type: tipo };
     if (m && ov) aplicarTmdb(m, ov);
-    if (m && !(usaTmdb && !ov)) {
+    if (m && !(usaTmdb && !ov) && (tipo !== 'series' || (Array.isArray(m.videos) && m.videos.length))) {
       if (baseCache.size >= 500) baseCache.clear();
       baseCache.set(chave, { t: Date.now(), m: structuredClone(m) });
     }
@@ -630,6 +644,7 @@ async function meta(tipo, id, cfg, userAgent = '') {
 
   const base = baseMeta || { id: id, type: tipo, name: imdb, description: '', genres: [] };
   const bloqueado = motivos.length > 0;
+  const semEpisodios = tipo === 'series' && !(Array.isArray(base.videos) && base.videos.length);
 
   let classificacaoFinal = br;
   if (!classificacaoFinal && base.certification && /^(l|livre|\d{1,2})$/i.test(String(base.certification).trim())) {
@@ -684,13 +699,13 @@ async function meta(tipo, id, cfg, userAgent = '') {
     }
   }
 
-  return { meta: base, bloqueado, motivos, incompleto: guia === undefined };
+  return { meta: base, bloqueado, motivos, incompleto: guia === undefined, semEpisodios };
 }
 
 function manifest() {
   return {
     id: 'community.guiadospais.ptbr',
-    version: '2.3.0',
+    version: '2.3.1',
     name: 'Controle de Impróprios',
     logo: LOGO,
     description: 'Exibe a classificação indicativa brasileira e o guia do IMDb diretamente no Stremio.',
@@ -824,7 +839,7 @@ function json(obj, maxAge = 0, status = 200) {
 const TIPOS_OK = new Set(['movie', 'series']);
 function paramsOk(tipo, id) { return TIPOS_OK.has(tipo) && /^[A-Za-z0-9_.:-]{1,100}$/.test(id); }
 
-const RESERVADOS = new Set(['configure', 'manifest.json', 'stream', 'meta', 'health', 'avaliar', 'registrar', 'registrar-status']);
+const RESERVADOS = new Set(['configure', 'manifest.json', 'stream', 'meta', 'health', 'avaliar', 'registrar', 'registrar-status', 'diagnostico']);
 
 async function tratar(req) {
   if (req.method === 'OPTIONS') {
@@ -847,6 +862,33 @@ async function tratar(req) {
   const rota = partes[0];
 
   if (rota === 'manifest.json') return json(manifest());
+
+  if (rota === 'diagnostico') { // mostra se chaves/KV/IMDb funcionam (nunca mostra as chaves)
+    let tmdbTeste = 'TMDB_KEY não definida';
+    let sinopse = null;
+    if (TMDB_KEY) {
+      try { await tmdb('/configuration'); tmdbTeste = 'ok'; } catch (e) { tmdbTeste = 'falhou: ' + String((e && e.message) || e); }
+      if (tmdbTeste === 'ok') {
+        try { sinopse = String((await resumoPtBR('tt0111161')) || '').slice(0, 80) || null; } catch {}
+      }
+    }
+    let imdbTeste;
+    try {
+      const r = await consultarIMDb('tt0111161');
+      imdbTeste = r.falhou ? 'falhou (possível bloqueio do IMDb)' : r.guia ? 'ok' : 'sem guia para este título';
+    } catch (e) { imdbTeste = 'falhou: ' + String((e && e.message) || e); }
+    return json({
+      versao: '2.3.1',
+      kv_ligado: !!KV,
+      tmdb_key_definida: !!TMDB_KEY,
+      tmdb_teste: tmdbTeste,
+      sinopse_teste_pt: sinopse,
+      imdb_teste: imdbTeste,
+      mdblist_key_definida: !!MDBLIST_KEY,
+      meta_url_definida: !!META_URL,
+    }, 0);
+  }
+
 
   const precisaPerfil = rota === 'configure' || rota === 'meta' || rota === 'stream' || rota === 'avaliar';
   const cfgBase = lerConfig(cfgB64);
@@ -873,7 +915,10 @@ async function tratar(req) {
     const userAgent = req.headers.get('user-agent') || '';
     const r = await meta(tipo, id, cfg, userAgent);
     if (!r) return json({ meta: null }, 0);
-    return json({ meta: r.meta }, r.incompleto ? 0 : 300);
+    // Série sem episódios e não bloqueada: não responde, para o Stremio usar o meta do próximo addon (AIOMetadata).
+    // Se estiver bloqueada, responde mesmo assim, para os outros addons não mostrarem os episódios sem o bloqueio.
+    if (r.semEpisodios && !r.bloqueado) return json({ meta: null }, 0, 404);
+    return json({ meta: r.meta }, r.incompleto || r.semEpisodios ? 0 : 300);
   }
 
   if (rota === 'avaliar') {
@@ -913,8 +958,8 @@ async function tratar(req) {
 
 export default {
   async fetch(request, env) {
-    init(env);
     try {
+      await init(env);
       return await tratar(request);
     } catch (e) {
       console.error(e);
