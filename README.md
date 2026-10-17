@@ -1,6 +1,6 @@
 Autor: Athayres Oliveira Miranda
 
-Servidor:cloudflare
+Servidor: Cloudflare
 
 ADD-ON Stremio esse add-on foi criado para suprir a necessidade de
 classificar o conteúdo improprio ou a faixa etária exibe na tela principal
