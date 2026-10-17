@@ -1,9 +1,11 @@
 Autor: Athayres Oliveira Miranda
 
+Servidor:cloudflare
+
 ADD-ON Stremio esse add-on foi criado para suprir a necessidade de
 classificar o conteúdo improprio ou a faixa etária exibe na tela principal
 um guia detalhado com varias analise do IMDB  
-ele pode ser usado para bloqueio de vídeos se for da vontade do usuario
+ele pode ser usado para bloqueio de vídeos se for da vontade do usuário
 por idade, categoria ou ambos
 
 Detalhe importante para mostrar o guia ele deve vir antes no topo da lista
