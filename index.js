@@ -95,7 +95,7 @@ function limitar(n, maxFila = Infinity) {
     fila.push({ fn, res, rej }); prox();
   });
 }
-const naFilaIMDb = limitar(3, 30);
+const naFilaIMDb = limitar(2, 30);
 
 function nivelDe(v) {
   switch (String(v || '').trim().toUpperCase().replace(/VOTES$/, '')) {
@@ -390,7 +390,13 @@ async function consultarIMDb(imdbId) {
     const rr = await consultarViaRelay(imdbId);
     if (rr) return rr;
   }
-  const gq = await baixarGraphQL(imdbId);
+  let gq = await baixarGraphQL(imdbId);
+  // 429 = limite de requisições do IMDb ("tente em alguns segundos"): espera e tenta de novo, sem bater na página (que cai no desafio anti-robô)
+  for (let t = 0; t < 2 && gq.status === 429; t++) {
+    await new Promise((r) => setTimeout(r, 2500 * (t + 1)));
+    gq = await baixarGraphQL(imdbId);
+  }
+  if (gq.status === 429) return { guia: null, falhou: true };
   if (gq.json) {
     const g = guiaDeJson(gq.json);
     if (g) return { guia: g };
