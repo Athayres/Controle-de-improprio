@@ -415,6 +415,14 @@ const FALHA_TTL = 2 * 60 * 1000;
 async function buscarGuia(imdbId) {
   const c = await cacheGet('g:' + imdbId);
   if (c) return c.v;
+  // Cache da versão anterior (gravava em c:guias:<id> como { t, g }): aproveita os guias já guardados em vez de consultar o IMDb de novo
+  if (KV) {
+    const o = await KV.get('c:guias:' + imdbId, 'json').catch(() => null);
+    if (o && typeof o === 'object' && 'g' in o && Date.now() - o.t < (o.g ? GUIA_TTL : NULO_TTL)) {
+      await cachePut('g:' + imdbId, o.g, o.g ? GUIA_TTL : NULO_TTL);
+      return o.g;
+    }
+  }
   if ((guiasFalhas.get(imdbId) || 0) > Date.now()) return undefined;
   if (guiasEmVoo.has(imdbId)) return guiasEmVoo.get(imdbId);
   const p = (async () => {
