@@ -398,13 +398,19 @@ async function consultarIMDb(imdbId) {
   // Se o endereço principal limitou (429/403), tenta uma vez o endereço de cache do IMDb, que costuma ter outro limite
   if (gq.status === 429 || gq.status === 403) gq = await baixarGraphQL(imdbId, 'https://caching.graphql.imdb.com/');
   if (gq.status === 429) { imdbPausaAte = Date.now() + 90 * 1000; return { guia: null, falhou: true }; }
+  let semGuiaNoGql = false;
   if (gq.json) {
     const g = guiaDeJson(gq.json);
     if (g) return { guia: g };
-    if (gq.json.data && gq.json.data.title && !gq.json.errors) return { guia: null };
+    // O GraphQL às vezes devolve o título com o guia vazio mesmo quando a página tem dados: confere na página antes de concluir
+    if (gq.json.data && gq.json.data.title && !gq.json.errors) semGuiaNoGql = true;
   }
   const p = await baixarPaginaIMDb(imdbId);
   const g = p.html ? extrairGuia(p.html) : null;
+  if (!g && semGuiaNoGql) {
+    const ok = p.status === 200 && (p.html.includes('__NEXT_DATA__') || /advisory-/i.test(p.html));
+    return { guia: null, curto: !ok }; // página inacessível: "sem guia" é incerto, guarda só por pouco tempo
+  }
   // página 200 sem __NEXT_DATA__ nem seções advisory (captcha/bloqueio) = falha, não "sem guia"
   const paginaValida = p.status === 200 && (p.html.includes('__NEXT_DATA__') || /advisory-/i.test(p.html));
   return { guia: g, falhou: !g && !paginaValida };
@@ -434,7 +440,7 @@ async function buscarGuia(imdbId) {
       guiasFalhas.set(imdbId, Date.now() + FALHA_TTL);
       return undefined;
     }
-    await cachePut('g:' + imdbId, r.guia, r.guia ? GUIA_TTL : NULO_TTL);
+    await cachePut('g:' + imdbId, r.guia, r.guia ? GUIA_TTL : (r.curto ? 30 * 60 * 1000 : NULO_TTL));
     return r.guia;
   })().finally(() => guiasEmVoo.delete(imdbId));
   guiasEmVoo.set(imdbId, p);
