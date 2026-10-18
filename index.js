@@ -273,9 +273,9 @@ async function baixarPaginaIMDb(imdbId) {
 }
 
 const GQL_QUERY = 'query($id: ID!){ title(id:$id){ parentsGuide{ categories{ category{ id text } severity{ id text votedFor } totalSeverityVotes } } } }';
-async function baixarGraphQL(imdbId) {
+async function baixarGraphQL(imdbId, host = 'https://api.graphql.imdb.com/') {
   try {
-    const r = await fetch('https://api.graphql.imdb.com/', {
+    const r = await fetch(host, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': UA, Origin: 'https://www.imdb.com', Referer: 'https://www.imdb.com/' },
       body: JSON.stringify({ query: GQL_QUERY, variables: { id: imdbId } }),
@@ -394,7 +394,9 @@ async function consultarIMDb(imdbId) {
   }
   // Pausa: depois de um 429 o IMDb fica sem receber nada por 90 s, para o limite esfriar (insistir só prolonga o bloqueio)
   if (Date.now() < imdbPausaAte) return { guia: null, falhou: true };
-  const gq = await baixarGraphQL(imdbId);
+  let gq = await baixarGraphQL(imdbId);
+  // Se o endereço principal limitou (429/403), tenta uma vez o endereço de cache do IMDb, que costuma ter outro limite
+  if (gq.status === 429 || gq.status === 403) gq = await baixarGraphQL(imdbId, 'https://caching.graphql.imdb.com/');
   if (gq.status === 429) { imdbPausaAte = Date.now() + 90 * 1000; return { guia: null, falhou: true }; }
   if (gq.json) {
     const g = guiaDeJson(gq.json);
