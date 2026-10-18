@@ -45,11 +45,11 @@ const MDB_NULO_TTL = 3 * 24 * 3600 * 1000;
 const NIVEIS = ['Nenhum', 'Leve', 'Moderado', 'Grave'];
 const COR = ['⬜', '🟩', '🟨', '🟥'];
 const CATEGORIAS = [
-  { key: 'sexo', rotulo: 'Sexo e nudez', icone: '🔞', ids: ['NUDITY'], texto: /nudity|sex|nudez/i },
-  { key: 'violencia', rotulo: 'Violência e sangue', icone: '🩸', ids: ['VIOLENCE'], texto: /violence|gore|viol[êe]ncia|sangue/i },
-  { key: 'palavroes', rotulo: 'Palavrões', icone: '🤬', ids: ['PROFANITY'], texto: /profanity|palavr|linguagem/i },
-  { key: 'drogas', rotulo: 'Álcool, drogas e fumo', icone: '🍺', ids: ['ALCOHOL'], texto: /alcohol|drugs|smoking|[áa]lcool|drogas|fumo/i },
-  { key: 'susto', rotulo: 'Cenas intensas e assustadoras', icone: '😱', ids: ['FRIGHTENING'], texto: /frightening|intense|assustador|intensas/i },
+  { key: 'sexo', rotulo: 'Sexo e nudez', icone: '🔞', ids: ['NUDITY'], texto: /nudity|sex/i },
+  { key: 'violencia', rotulo: 'Violência e sangue', icone: '🩸', ids: ['VIOLENCE'], texto: /violence|gore/i },
+  { key: 'palavroes', rotulo: 'Palavrões', icone: '🤬', ids: ['PROFANITY'], texto: /profanity/i },
+  { key: 'drogas', rotulo: 'Álcool, drogas e fumo', icone: '🍺', ids: ['ALCOHOL'], texto: /alcohol|drugs|smoking/i },
+  { key: 'susto', rotulo: 'Cenas intensas e assustadoras', icone: '😱', ids: ['FRIGHTENING'], texto: /frightening|intense/i },
 ];
 
 const CFG_PADRAO = { max: { sexo: 0, violencia: 1, palavroes: 0, drogas: 1, susto: 1 }, idade: 18 };
@@ -94,11 +94,11 @@ function limitar(n, maxFila = Infinity) {
 const naFilaIMDb = limitar(3, 30);
 
 function nivelDe(v) {
-  switch (String(v || '').trim().toUpperCase().replace(/VOTES$/, '')) {
-    case 'NONE': case 'NENHUM': case 'NENHUMA': return 0;
-    case 'MILD': case 'LEVE': return 1;
-    case 'MODERATE': case 'MODERADO': case 'MODERADA': return 2;
-    case 'SEVERE': case 'GRAVE': return 3;
+  switch (String(v || '').toUpperCase().replace(/VOTES$/, '')) {
+    case 'NONE': return 0;
+    case 'MILD': return 1;
+    case 'MODERATE': return 2;
+    case 'SEVERE': return 3;
     default: return null;
   }
 }
@@ -318,7 +318,7 @@ function nivelDoItem(el) {
 
 function coletarCategorias(no, saida = [], prof = 0) {
   if (!no || typeof no !== 'object' || prof > 16) return saida;
-  if (Array.isArray(no) && no.some((e) => e && typeof e === 'object' && ((e.category && (typeof e.category === 'string' || e.category.id || e.category.text)) || ((e.id || e.title) && (e.severitySummary || e.severity))))) saida.push(no);
+  if (Array.isArray(no) && no.some((e) => e && typeof e === 'object' && e.category && (typeof e.category === 'string' || e.category.id || e.category.text))) saida.push(no);
   for (const v of Object.values(no)) coletarCategorias(v, saida, prof + 1);
   return saida;
 }
@@ -328,8 +328,8 @@ function guiaDeJson(dados) {
   let achou = false;
   for (const arr of coletarCategorias(dados)) {
     for (const el of arr) {
-      if (!el || !(el.category || el.id || el.title)) continue;
-      const cat = el.category || { id: el.id, text: el.title };
+      if (!el || !el.category) continue;
+      const cat = el.category;
       const id = String(typeof cat === 'string' ? cat : cat.id || '').toUpperCase();
       const txt = typeof cat === 'string' ? cat : String(cat.text || '');
       const alvo = CATEGORIAS.find((x) => x.ids.includes(id) || x.texto.test(txt) || x.texto.test(id));
@@ -350,7 +350,7 @@ function guiaDeHtml(html) {
     const i = html.search(new RegExp(`advisory-${slug}`, 'i'));
     if (i < 0) continue;
     const trecho = html.slice(i, i + 1500).replace(/<[^>]+>/g, ' ');
-    const m = trecho.match(/(?<![\p{L}])(None|Mild|Moderate|Severe|Nenhum[a]?|Leve|Moderad[ao]|Grave)(?![\p{L}])/u);
+    const m = trecho.match(/\b(None|Mild|Moderate|Severe)\b/);
     if (m) { guia[key] = nivelDe(m[1]); achou = true; }
   }
   return achou ? guia : null;
