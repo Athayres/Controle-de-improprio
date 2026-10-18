@@ -14,28 +14,32 @@ const LOGO = 'https://raw.githubusercontent.com/Athayres/IMDB-Conteudo-Classific
 let TMDB_KEY = '';
 let MDBLIST_KEY = '';
 let META_URL = '';
+let RELAY_URL = '';
 let BLOQUEAR_SEM_INFO = false;
 let KV = null;
 
 // Chaves vindas do KV (entradas TMDB_KEY, MDBLIST_KEY, META_URL) quando não estão em Variables and Secrets.
-let kvChaves = { t: 0, TMDB_KEY: '', MDBLIST_KEY: '', META_URL: '' };
+let kvChaves = { t: 0, TMDB_KEY: '', MDBLIST_KEY: '', META_URL: '', RELAY_URL: '' };
 
 async function init(env) {
   KV = env.KV || null;
   TMDB_KEY = String(env.TMDB_KEY || '').trim();
   MDBLIST_KEY = String(env.MDBLIST_KEY || '').trim();
   META_URL = String(env.META_URL || '').trim();
+  RELAY_URL = String(env.RELAY_URL || '').trim();
   BLOQUEAR_SEM_INFO = env.BLOQUEAR_SEM_CLASSIFICACAO === '1';
-  if (KV && (!TMDB_KEY || !MDBLIST_KEY || !META_URL)) {
+  if (KV && (!TMDB_KEY || !MDBLIST_KEY || !META_URL || !RELAY_URL)) {
     if (Date.now() - kvChaves.t > 5 * 60 * 1000) {
       const ler = async (k) => String((await KV.get(k).catch(() => null)) || '').trim();
-      kvChaves = { t: Date.now(), TMDB_KEY: await ler('TMDB_KEY'), MDBLIST_KEY: await ler('MDBLIST_KEY'), META_URL: await ler('META_URL') };
+      kvChaves = { t: Date.now(), TMDB_KEY: await ler('TMDB_KEY'), MDBLIST_KEY: await ler('MDBLIST_KEY'), META_URL: await ler('META_URL'), RELAY_URL: await ler('RELAY_URL') };
     }
     TMDB_KEY = TMDB_KEY || kvChaves.TMDB_KEY;
     MDBLIST_KEY = MDBLIST_KEY || kvChaves.MDBLIST_KEY;
     META_URL = META_URL || kvChaves.META_URL;
+    RELAY_URL = RELAY_URL || kvChaves.RELAY_URL;
   }
   META_URL = META_URL.replace(/\/manifest\.json$/i, '').replace(/\/+$/, '');
+  RELAY_URL = RELAY_URL.replace(/\/+$/, '');
 }
 
 const GUIA_TTL = 30 * 24 * 3600 * 1000;
@@ -364,7 +368,28 @@ function extrairGuia(html) {
   return guiaDeHtml(html);
 }
 
+async function consultarViaRelay(imdbId) {
+  try {
+    const r = await fetch(`${RELAY_URL}/imdb/${imdbId}`, { signal: AbortSignal.timeout(25000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d && d.gql) {
+      const g = guiaDeJson(d.gql);
+      if (g) return { guia: g };
+      if (d.gql.data && d.gql.data.title && !d.gql.errors) return { guia: null };
+    }
+    const g = d && d.html ? extrairGuia(d.html) : null;
+    if (g) return { guia: g };
+    const paginaValida = d && d.status === 200 && d.html && (d.html.includes('__NEXT_DATA__') || /advisory-/i.test(d.html));
+    return paginaValida ? { guia: null } : null;
+  } catch { return null; }
+}
+
 async function consultarIMDb(imdbId) {
+  if (RELAY_URL) {
+    const rr = await consultarViaRelay(imdbId);
+    if (rr) return rr;
+  }
   const gq = await baixarGraphQL(imdbId);
   if (gq.json) {
     const g = guiaDeJson(gq.json);
@@ -877,13 +902,27 @@ async function tratar(req) {
       const r = await consultarIMDb('tt0111161');
       imdbTeste = r.falhou ? 'falhou (possível bloqueio do IMDb)' : r.guia ? 'ok' : 'sem guia para este título';
     } catch (e) { imdbTeste = 'falhou: ' + String((e && e.message) || e); }
+    let imdbDetalhe = null;
+    try {
+      const g = await baixarGraphQL('tt0111161');
+      const pg = await baixarPaginaIMDb('tt0111161');
+      imdbDetalhe = {
+        graphql_status: g.status, graphql_erro: g.erro || null,
+        graphql_resposta: String(g.texto || '').slice(0, 200),
+        pagina_status: pg.status, pagina_erro: pg.erro || null,
+        pagina_tem_dados: /__NEXT_DATA__|advisory-/i.test(pg.html || ''),
+        pagina_inicio: String(pg.html || '').replace(/\s+/g, ' ').slice(0, 200),
+      };
+    } catch (e) { imdbDetalhe = { erro: String((e && e.message) || e) }; }
     return json({
+      imdb_detalhe: imdbDetalhe,
       versao: '2.3.1',
       kv_ligado: !!KV,
       tmdb_key_definida: !!TMDB_KEY,
       tmdb_teste: tmdbTeste,
       sinopse_teste_pt: sinopse,
       imdb_teste: imdbTeste,
+      relay_definido: !!RELAY_URL,
       mdblist_key_definida: !!MDBLIST_KEY,
       meta_url_definida: !!META_URL,
     }, 0);
