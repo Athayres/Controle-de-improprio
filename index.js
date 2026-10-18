@@ -385,18 +385,17 @@ async function consultarViaRelay(imdbId) {
   } catch { return null; }
 }
 
+let imdbPausaAte = 0;
+
 async function consultarIMDb(imdbId) {
   if (RELAY_URL) {
     const rr = await consultarViaRelay(imdbId);
     if (rr) return rr;
   }
-  let gq = await baixarGraphQL(imdbId);
-  // 429 = limite de requisições do IMDb ("tente em alguns segundos"): espera e tenta de novo, sem bater na página (que cai no desafio anti-robô)
-  for (let t = 0; t < 2 && gq.status === 429; t++) {
-    await new Promise((r) => setTimeout(r, 2500 * (t + 1)));
-    gq = await baixarGraphQL(imdbId);
-  }
-  if (gq.status === 429) return { guia: null, falhou: true };
+  // Pausa: depois de um 429 o IMDb fica sem receber nada por 90 s, para o limite esfriar (insistir só prolonga o bloqueio)
+  if (Date.now() < imdbPausaAte) return { guia: null, falhou: true };
+  const gq = await baixarGraphQL(imdbId);
+  if (gq.status === 429) { imdbPausaAte = Date.now() + 90 * 1000; return { guia: null, falhou: true }; }
   if (gq.json) {
     const g = guiaDeJson(gq.json);
     if (g) return { guia: g };
@@ -909,7 +908,7 @@ async function tratar(req) {
       imdbTeste = r.falhou ? 'falhou (possível bloqueio do IMDb)' : r.guia ? 'ok' : 'sem guia para este título';
     } catch (e) { imdbTeste = 'falhou: ' + String((e && e.message) || e); }
     let imdbDetalhe = null;
-    try {
+    if (new URL(req.url).searchParams.has('detalhe')) try {
       const g = await baixarGraphQL('tt0111161');
       const pg = await baixarPaginaIMDb('tt0111161');
       imdbDetalhe = {
